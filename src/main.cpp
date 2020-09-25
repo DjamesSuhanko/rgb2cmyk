@@ -20,39 +20,103 @@ procure por EDIT THE PIN NUMBERS IN THE LINES FOLLOWING TO SUIT YOUR ESP32 SETUP
 #########################################################################
 ###### DON'T FORGET TO UPDATE THE User_Setup.h FILE IN THE LIBRARY ######
 #########################################################################
+
+
+http://www.javascripter.net/faq/rgb2cmyk.htm
+https://www.rapidtables.com/convert/color/rgb-to-cmyk.html
+
+
+Conversão de RGB 24 bits para CMYK:
+The R,G,B values are divided by 255 to change the range from 0..255 to 0..1:
+R' = R/255
+G' = G/255
+B' = B/255
+
+The black key (K) color is calculated from the red (R'), green (G') and blue (B') colors:
+K = 1-max(R', G', B')
+
+The cyan color (C) is calculated from the red (R') and black (K) colors:
+C = (1-R'-K) / (1-K)
+
+The magenta color (M) is calculated from the green (G') and black (K) colors:
+M = (1-G'-K) / (1-K)
+
+The yellow color (Y) is calculated from the blue (B') and black (K) colors:
+Y = (1-B'-K) / (1-K)
+
+resultado é a porcentagem de cada cor
  */
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <WiFi.h>
 
 #define TFT_GREY 0x5AEB
 
+#define SSID "SuhankoFamily"
+#define PASSWD "fsjmr112"
+
+#define DISPLAY_WIDTH  240
+#define DISPLAY_HEIGHT 320
+
+#define REPEAT_CAL     false
+#define BLACK_SPOT
+
+#define FRAME_X        0
+#define FRAME_Y        0
+#define FRAME_W        50
+#define FRAME_H        116
+
+#define ML_MINUS_X     FRAME_X
+#define  ML_MINUS_Y    FRAME_Y
+#define ML_MINUS_W     FRAME_W
+#define ML_MINUS_H     FRAME_H
+
+#define ML_PLUS_X      DISPLAY_WIDTH-FRAME_W
+#define ML_PLUS_Y      FRAME_H
+#define ML_PLUS_W      FRAME_W
+#define ML_PLUS_H      FRAME_H
+
 TFT_eSPI tft = TFT_eSPI();
 
+String vol          = "0";
+
+float one_ml        = 2.141;
 float ltx           = 0;              // Coordenada x do ponteiro analógico
+
 uint16_t osx        = 120, osy = 120; // Guarda coordenadas x e y
+
 uint32_t updateTime = 0;              // intervalo para update
 
-int old_analog =  -999; // Value last displayed
-int old_digital = -999; // Value last displayed
+int old_analog      =  -999; // Value last displayed
+int old_digital     = -999; // Value last displayed
+int value[4]        = {0, 0, 0, 0}; //variável que armazena os valores CMYK exibidos no display
+int old_value[4]    = { -1, -1, -1, -1};
+int vol_in_ml       = 10; //TODO: colocar em 0 depois de criar a função que alimenta essa variável
 
-int value[4] = {0, 0, 0, 0}; //variável que armazena os valores CMYK exibidos no display
-int old_value[4] = { -1, -1, -1, -1};
-int d = 0;
+boolean SwitchOn    = false;
+
+char print_str[7];
 
 //construtores
 void plotPointer(void);
 void plotLinear(char *label, int x, int y);
 void plotNeedle(int value, byte ms_delay);
 void analogMeter();
+void rgb2cmyk(uint8_t R, uint8_t G, uint8_t B);
+void getTouch();
 
 
 void setup(void) {
   tft.init();
   tft.setRotation(0); // 0 ou 2? Depende da posição do display, mas tem que ser vertical
+  uint16_t calData[5] = { 331, 3490, 384, 3477, 6 };
+  tft.setTouch(calData);
   Serial.begin(9600); 
   tft.fillScreen(TFT_BLACK);
+
+  memset(print_str,0,sizeof(print_str));
 
   analogMeter(); // Draw analogue meter
 
@@ -65,31 +129,78 @@ void setup(void) {
   plotLinear("K", 3 * distance, 160);
 
   updateTime = millis();
+  rgb2cmyk(80,30,50);
+  Serial.println(" ");
+  Serial.println("MCU started.");
+
+  WiFi.begin(SSID,PASSWD);
+    //...e aguardamos até que esteja concluída.
+    while (WiFi.status() != WL_CONNECTED) {
+
+        delay(1000);
+
+    }
+    Serial.println("Wifi started.");
 }
 
 
 void loop() {
+  getTouch();
   if (updateTime <= millis()) {
     updateTime = millis() + 25; // limitador da velocidade de update
  
-    d += 4; if (d >= 360) d = 0; //usado para fazer a senoide de exemplo, será descartado
-
-    // Create a Sine wave for testing
-    // O valor a ser apresentado nas setas é atribuído à variável value
-    value[0] = 50 + 50 * sin((d + 0) * 0.0174532925);
-    value[1] = 50 + 50 * sin((d + 60) * 0.0174532925);
-    value[2] = 50 + 50 * sin((d + 120) * 0.0174532925);
-    value[3] = 50 + 50 * sin((d + 180) * 0.0174532925);
+    //d += 4; if (d >= 360) d = 0; //usado para fazer a senoide de exemplo, será descartado
     
+    //Será necessário uma função que receba o RGB para passar à função rgb2cmyk (TODO)
+    rgb2cmyk(80,30,50);
     //renderiza os ponteiros vermelhos das colunas
     plotPointer(); // It takes aout 3.5ms to plot each gauge for a 1 pixel move, 21ms for 6 gauges
      
     //renderiza o ponteiro analógico
-    plotNeedle(value[0], 0); // It takes between 2 and 12ms to replot the needle with zero delay
-    //Serial.println(millis()-t); // Print time taken for meter update
+    //plotNeedle(value[0], 0); // It takes between 2 and 12ms to replot the needle with zero delay
+    plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
   }
 }
 
+void getTouch(){
+  //TODO: implementar os meters
+  uint16_t x,y = 0;
+  if (tft.getTouch(&x,&y)){
+    // 320 é Y, 240 é X
+    //se x <= 50 & y <= 100
+    if (x <= FRAME_W && y <= FRAME_H){
+      tft.setTextColor(TFT_WHITE);
+      tft.drawCentreString(print_str, 120, 70, 4); 
+      vol_in_ml = vol_in_ml >14 ? vol_in_ml-5 : vol_in_ml;
+    }
+    //x >= 240-50 & y <= 100
+    else if (x >= ML_PLUS_X && (y <= FRAME_H)){
+      tft.setTextColor(TFT_WHITE);
+      tft.drawCentreString(print_str, 120, 70, 4); 
+      vol_in_ml = vol_in_ml < 96 ? vol_in_ml+5 : vol_in_ml;
+    }
+      //tft.fillCircle(x, y, 2, TFT_BLACK);
+      Serial.println(x);
+      Serial.println(y);
+  }
+}
+
+void rgb2cmyk(uint8_t R, uint8_t G, uint8_t B){
+  float Rfrac = (float)R/(float)255;
+  float Gfrac = (float)G/(float)255;
+  float Bfrac = (float)B/(float)255;
+
+  float K = 1-max({Rfrac,Gfrac,Bfrac});
+
+  float C = (1-Rfrac-K)/(1-K);
+  float M = (1-Gfrac-K)/(1-K);
+  float Y = (1-Bfrac-K)/(1-K);
+
+  value[0] = C*100;
+  value[1] = M*100;
+  value[2] = Y*100;
+  value[3] = K*100;
+}
 
 // #########################################################################
 //  Draw the analogue meter on the screen
@@ -171,7 +282,7 @@ void analogMeter()
   }
 
   tft.drawString("ml", 5 + 230 - 40, 119 - 20, 2); // Unidade no canto direito inferior
-  tft.drawCentreString("ml", 120, 70, 4); // Não vi efeito, mas mantido
+  tft.drawCentreString(" ", 120, 70, 4); // Não vi efeito, mas mantido
   tft.drawRect(5, 3, 230, 119, TFT_BLACK); // Draw bezel line
 
   plotNeedle(0, 0); // Ponteiro começa no 0, simples desse jeito
@@ -215,7 +326,12 @@ void plotNeedle(int value, byte ms_delay)
 
     // Re-plot text under needle
     tft.setTextColor(TFT_BLACK);
-    tft.drawCentreString("ml", 120, 70, 4); // // Comment out to avoid font 4
+    String vol_str = String(vol_in_ml);
+    vol_str = vol_str + " ml";
+    
+    memset(print_str,0,sizeof(print_str));
+    vol_str.toCharArray(print_str,sizeof(vol_str),0U);
+    tft.drawCentreString(print_str, 120, 70, 4); // // Comment out to avoid font 4
 
     // Store new needle end coords for next erase
     ltx = tx;
