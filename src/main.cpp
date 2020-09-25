@@ -44,7 +44,7 @@ M = (1-G'-K) / (1-K)
 The yellow color (Y) is calculated from the blue (B') and black (K) colors:
 Y = (1-B'-K) / (1-K)
 
-resultado é a porcentagem de cada cor
+resultado é a porcentagem de cada cor em relação ao volume.
  */
 
 #include <Arduino.h>
@@ -93,7 +93,7 @@ int old_analog      =  -999; // Value last displayed
 int old_digital     = -999; // Value last displayed
 int value[4]        = {0, 0, 0, 0}; //variável que armazena os valores CMYK exibidos no display
 int old_value[4]    = { -1, -1, -1, -1};
-int vol_in_ml       = 10; //TODO: colocar em 0 depois de criar a função que alimenta essa variável
+int vol_in_ml       = 10; 
 
 boolean SwitchOn    = false;
 
@@ -143,45 +143,102 @@ void setup(void) {
     Serial.println("Wifi started.");
 }
 
-
 void loop() {
   getTouch();
   if (updateTime <= millis()) {
     updateTime = millis() + 25; // limitador da velocidade de update
- 
-    //d += 4; if (d >= 360) d = 0; //usado para fazer a senoide de exemplo, será descartado
     
     //Será necessário uma função que receba o RGB para passar à função rgb2cmyk (TODO)
-    rgb2cmyk(80,30,50);
+    //rgb2cmyk(80,30,50);
     //renderiza os ponteiros vermelhos das colunas
     plotPointer(); // It takes aout 3.5ms to plot each gauge for a 1 pixel move, 21ms for 6 gauges
      
     //renderiza o ponteiro analógico
-    //plotNeedle(value[0], 0); // It takes between 2 and 12ms to replot the needle with zero delay
     plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
   }
 }
 
 void getTouch(){
-  //TODO: implementar os meters
   uint16_t x,y = 0;
   if (tft.getTouch(&x,&y)){
     // 320 é Y, 240 é X
     //se x <= 50 & y <= 100
+    //VOLUME
     if (x <= FRAME_W && y <= FRAME_H){
       tft.setTextColor(TFT_WHITE);
       tft.drawCentreString(print_str, 120, 70, 4); 
-      vol_in_ml = vol_in_ml >14 ? vol_in_ml-5 : vol_in_ml;
+      vol_in_ml = vol_in_ml >14 ? vol_in_ml-5 : vol_in_ml-1;
     }
     //x >= 240-50 & y <= 100
     else if (x >= ML_PLUS_X && (y <= FRAME_H)){
       tft.setTextColor(TFT_WHITE);
       tft.drawCentreString(print_str, 120, 70, 4); 
-      vol_in_ml = vol_in_ml < 96 ? vol_in_ml+5 : vol_in_ml;
+      vol_in_ml = vol_in_ml < 96 ? vol_in_ml+5 : vol_in_ml+1;
     }
+    /* Os meters estão assim:
+     C   M   Y   K
+    --- --- --- ---
+    | | | | | | | |
+    --- --- --- ---
+     1   2   3   4
+
+    O display tem 240 x 320. 240/4 = 60, portanto cada meter tem 60 de espaço.
+    As posições são passadas na função plotLinear(label,x,y) em setup(). Ex:
+    byte distance = 60;
+    plotLinear("C", 0, 160);
+    plotLinear("M", 1 * distance, 160);
+    plotLinear("Y", 2 * distance, 160);
+    plotLinear("K", 3 * distance, 160);
+
+    Deve-se deixar uma borda para não invadir o próximo meter no toque, portanto:
+    meter0: x=0   w=55 ; y=160 h=320-160
+    meter1: x=60  w=55 ; y=160 h=320-160
+    meter2: x=120 w=55 ; y=160 h=320-160
+    meter3: x=180 w=55 ; y=160 h=320-160
+    */
+    else if (x<56 && (y>160 && y<180)){
+        value[0] = value[0] <100 ? value[0]+1 : value[0];
+        Serial.println("C+");
+    }
+    else if ((x>=60 && x<60+55) && (y>160 && y<180)){
+        value[1] = value[1] <100 ? value[1]+1 : value[1];
+        Serial.println("M+");
+    }
+    else if ((x>=120 && x<120+55) && (y>160 && y<180)){
+        value[2] = value[2] <100 ? value[2]+1 : value[2];
+        Serial.println("Y+");
+    }
+    else if ((x>=180 && x<180+55) && (y>160 && y<180)){
+        value[3] = value[3] <100 ? value[3]+1 : value[3];
+        Serial.println("K+");
+    }
+    //Agora, os últimos 20 px são para decremento.
+    else if (x<56 && y>=300){
+      value[0] = value[0] >0 ? value[0]-1 : value[0];
+      Serial.print("M: ");
+      Serial.println(value[0]);
+    }
+    else if ((x>=60 && x<60+55) && y>=300){
+      value[1] = value[1] >0 ? value[1]-1 : value[1];
+      Serial.print("M: ");
+      Serial.println(value[1]);
+    }
+    else if ((x>=120 && x<120+55) && y>300){
+      value[2] = value[2] >0 ? value[2]-1 : value[2];
+      Serial.print("Y: ");
+      Serial.println(value[2]);
+    }
+    else if((x>=180 && x<180+55) && y>300){
+      value[3] = value[3] >0 ? value[3]-1 : value[3];
+      Serial.print("K: ");
+      Serial.println(value[3]);
+    }
+
       //tft.fillCircle(x, y, 2, TFT_BLACK);
-      Serial.println(x);
-      Serial.println(y);
+      //Serial.print("x: ");
+      //Serial.println(x);
+      //Serial.print("y: ");
+      //Serial.println(y);
   }
 }
 
@@ -285,7 +342,7 @@ void analogMeter()
   tft.drawCentreString(" ", 120, 70, 4); // Não vi efeito, mas mantido
   tft.drawRect(5, 3, 230, 119, TFT_BLACK); // Draw bezel line
 
-  plotNeedle(0, 0); // Ponteiro começa no 0, simples desse jeito
+  plotNeedle(0, 0); // Ponteiro começa no 0.
 }
 
 // #########################################################################
@@ -308,7 +365,12 @@ void plotNeedle(int value, byte ms_delay)
   while (!(value == old_analog)) {
     if (old_analog < value) old_analog++;
     else old_analog--;
-
+    if (vol_in_ml <9){
+      vol_in_ml = 10;
+    }
+    else if (vol_in_ml > 100){
+      vol_in_ml = 100;
+    }
     if (ms_delay == 0) old_analog = value; // Update immediately id delay is 0
 
     float sdeg = map(old_analog, -10, 110, -150, -30); // Map value to angle
