@@ -22,7 +22,7 @@ procure por EDIT THE PIN NUMBERS IN THE LINES FOLLOWING TO SUIT YOUR ESP32 SETUP
 #########################################################################
 
 
-http://www.javascripter.net/faq/rgb2cmyk.htm
+
 https://www.rapidtables.com/convert/color/rgb-to-cmyk.html
 
 
@@ -78,12 +78,19 @@ resultado é a porcentagem de cada cor em relação ao volume.
 #define ML_PLUS_W      FRAME_W
 #define ML_PLUS_H      FRAME_H
 
+#define RGB_MAX 255.0
+#define ONE_DOT 1.0
+#define HUNDRED 100.0
+
+
 TFT_eSPI tft = TFT_eSPI();
 
 String vol          = "0";
 
 float one_ml        = 2.141;
 float ltx           = 0;              // Coordenada x do ponteiro analógico
+
+uint8_t RGBarray[3];
 
 uint16_t osx        = 120, osy = 120; // Guarda coordenadas x e y
 
@@ -105,7 +112,9 @@ void plotLinear(char *label, int x, int y);
 void plotNeedle(int value, byte ms_delay);
 void analogMeter();
 void rgb2cmyk(uint8_t R, uint8_t G, uint8_t B);
+void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K);
 void getTouch();
+void colorMix(void *pvParameters);
 
 
 void setup(void) {
@@ -141,6 +150,10 @@ void setup(void) {
 
     }
     Serial.println("Wifi started.");
+
+    //uint8_t convertido = round(255.0 * (1.0-((float)43/100.0))*(1.0-((float)10/100.0)));
+    //Serial.println(convertido);
+    cmyk2rgb(43, 30, 10, 10);
 }
 
 void loop() {
@@ -156,6 +169,55 @@ void loop() {
     //renderiza o ponteiro analógico
     plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
   }
+}
+
+void colorMix(void *pvParameters){
+    /*
+    Essa task liga, aguarda o tempo e desliga o motor. Ela será executada quando houver
+    uma chamada diferente de 0 para CMYK e se exclui ao final.
+    Ela lerá os valores de CMYK da variável values. Para ser executada, deve-se clicar sobre o
+    valor de volume no meter analógico.
+    TODO: fazer uma trava para não executar múltiplas vezes. 
+    boolean task_is_running = true evitará que se execute múltiplas vezes.
+    getTouch pode fazer um delay ao perceber o toque no volume.
+    */
+}
+
+void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K){
+/*
+A reversa também é simples e será utilizada para manipular o CMYK direto no display.
+O RGB é inteiro, mas o CMYK precisa ser passado de 0 à 1 novamente. No artigo tem uma
+imagem de exemplo do cálculo na calculadora, mas segue um exemplo:
+C = 43
+M = 30
+Y = 10
+K = 10
+
+R = 255 * (1-(43/100))*(1-(10/100)) = 130,815 ; arredondar para cima quando > 0.5
+
+==================================
+The R,G,B values are given in the range of 0..255.
+
+The red (R) color is calculated from the cyan (C) and black (K) colors:
+
+R = 255 × (1-C) × (1-K)
+
+The green color (G) is calculated from the magenta (M) and black (K) colors:
+
+G = 255 × (1-M) × (1-K)
+
+The blue color (B) is calculated from the yellow (Y) and black (K) colors:
+
+B = 255 × (1-Y) × (1-K)
+*/
+    memset(RGBarray,0,sizeof(RGBarray));
+    RGBarray[0] = round(RGB_MAX * (ONE_DOT-((float)C/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
+    RGBarray[1] = round(RGB_MAX * (ONE_DOT-((float)M/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
+    RGBarray[2] = round(RGB_MAX * (ONE_DOT-((float)Y/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
+
+    //Serial.println(RGBarray[0]);
+    //Serial.println(RGBarray[1]);
+    //Serial.println(RGBarray[2]);
 }
 
 void getTouch(){
@@ -481,6 +543,8 @@ void plotPointer(void)
         old_value[i]++;
         tft.drawLine(dx, dy - 6, dx + pw, dy - 1, TFT_RED);
       }
+      cmyk2rgb(value[0],value[1],value[2],value[3]);
+      tft.fillRect(5, 130, 230, 20, tft.color565(RGBarray[0],RGBarray[1],RGBarray[2]));
     }
   }
 }
