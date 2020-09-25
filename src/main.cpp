@@ -115,7 +115,7 @@ void rgb2cmyk(uint8_t R, uint8_t G, uint8_t B);
 void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K);
 void getTouch();
 void colorMix(void *pvParameters);
-
+void btnStart();
 
 void setup(void) {
   tft.init();
@@ -136,6 +136,8 @@ void setup(void) {
   plotLinear("M", 1 * distance, 160);
   plotLinear("Y", 2 * distance, 160);
   plotLinear("K", 3 * distance, 160);
+
+  btnStart();
 
   updateTime = millis();
   rgb2cmyk(80,30,50);
@@ -169,6 +171,18 @@ void loop() {
     //renderiza o ponteiro analógico
     plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
   }
+}
+
+void btnStart(){
+  uint16_t x,y = 0;
+  if (!tft.getTouch(&x,&y)){
+  tft.fillRect(240/2-48, 93, 80, 20, tft.color565(127,90,80));
+  tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
+  tft.setTextColor(TFT_WHITE);
+  tft.drawString("Iniciar", 240/2-35, 95, 4);
+  }
+  
+  //tft.fillRect(240/2-30, 90, 60, 20, tft.color565(255,0,0));
 }
 
 void colorMix(void *pvParameters){
@@ -295,7 +309,18 @@ void getTouch(){
       Serial.print("K: ");
       Serial.println(value[3]);
     }
-
+    // 75 até 200
+    else if ((x>240/2-45 && x<240/2+45) && (y>95 && y<95+25)){
+        tft.fillRect(240/2-45, 95, 80, 20, tft.color565(255,0,0));
+        tft.setTextColor(TFT_WHITE);
+        tft.drawString("Iniciar", 240/2-35, 95, 4);
+        delay(1000);
+        tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
+        tft.drawString("Iniciar", 240/2-35, 95, 4);
+        Serial.println("bingo");
+        //TODO: chamar o start das bombas aqui
+        
+    }
       //tft.fillCircle(x, y, 2, TFT_BLACK);
       //Serial.print("x: ");
       //Serial.println(x);
@@ -472,6 +497,7 @@ void plotNeedle(int value, byte ms_delay)
     if (abs(old_analog - value) < 10) ms_delay += ms_delay / 5;
 
     // Wait before next update
+    btnStart();
     delay(ms_delay);
   }
 }
