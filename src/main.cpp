@@ -7,7 +7,7 @@ Instale a biblioteca TFT_eSPI
 Edite o arquivo User_setup.h
 Confirme o modello ILI9341
 
-procure por EDIT THE PIN NUMBERS IN THE LINES FOLLOWING TO SUIT YOUR ESP32 SETUP e defina os pinos:
+Procure por EDIT THE PIN NUMBERS IN THE LINES FOLLOWING TO SUIT YOUR ESP32 SETUP e defina os pinos:
 #define TOUCH_CS 33 
 #define TFT_MISO 19 
 #define TFT_MOSI 23 
@@ -17,13 +17,15 @@ procure por EDIT THE PIN NUMBERS IN THE LINES FOLLOWING TO SUIT YOUR ESP32 SETUP
 #define TFT_RST   4   
 #define TFT_RST  -1   
 
+Essa definição é a que deve ser usada na AFSmartControl:
+https://www.afeletronica.com.br/pd-6ec52e-esp32-afsmartcontrol.html?ct=&p=1&s=1
+
 #########################################################################
 ###### DON'T FORGET TO UPDATE THE User_Setup.h FILE IN THE LIBRARY ######
 #########################################################################
 
 
-
-https://www.rapidtables.com/convert/color/rgb-to-cmyk.html
+Referência: https://www.rapidtables.com/convert/color/rgb-to-cmyk.html
 
 
 Conversão de RGB 24 bits para CMYK:
@@ -51,6 +53,8 @@ resultado é a porcentagem de cada cor em relação ao volume.
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <WiFi.h>
+#include <Wire.h>
+#include <initializer_list>
 
 #define TFT_GREY 0x5AEB
 
@@ -78,9 +82,18 @@ resultado é a porcentagem de cada cor em relação ao volume.
 #define ML_PLUS_W      FRAME_W
 #define ML_PLUS_H      FRAME_H
 
-#define RGB_MAX 255.0
-#define ONE_DOT 1.0
-#define HUNDRED 100.0
+#define RGB_MAX        255.0
+#define ONE_DOT        1.0
+#define HUNDRED        100.0
+
+#define PCF_ADDR       0x27
+
+SemaphoreHandle_t myMutex;
+
+TaskHandle_t task_zero   = NULL;
+TaskHandle_t task_one    = NULL;
+TaskHandle_t task_two    = NULL;
+TaskHandle_t task_three  = NULL;
 
 
 TFT_eSPI tft = TFT_eSPI();
@@ -88,23 +101,36 @@ TFT_eSPI tft = TFT_eSPI();
 String vol          = "0";
 
 float one_ml        = 2.141;
-float ltx           = 0;              // Coordenada x do ponteiro analógico
+float ltx           = 0;                  // Coordenada x do ponteiro analógico
 
 uint8_t RGBarray[3];
 
-uint16_t osx        = 120, osy = 120; // Guarda coordenadas x e y
+uint16_t osx        = 120, osy = 120;     // Guarda coordenadas x e y
 
-uint32_t updateTime = 0;              // intervalo para update
+uint32_t updateTime = 0;                  // intervalo para update
 
-int old_analog      =  -999; // Value last displayed
-int old_digital     = -999; // Value last displayed
-int value[4]        = {0, 0, 0, 0}; //variável que armazena os valores CMYK exibidos no display
+int old_analog      =  -999;              // Value last displayed
+int old_digital     = -999;               // Value last displayed
+int value[4]        = {0, 0, 0, 0};       //variável que armazena os valores CMYK exibidos no display
 int old_value[4]    = { -1, -1, -1, -1};
 int vol_in_ml       = 10; 
 
 boolean SwitchOn    = false;
 
 char print_str[7];
+
+String rgb2cmyk_ip = "0.0.0.0";
+
+struct pump_t {
+    uint8_t pcf_value       = 255;                                      // estados dos pinos
+    uint8_t pump_index      = 0;                                        // bomba a ligar
+    uint8_t pumps_values[4] = {7,6,5,4};                                // apenas para ordenar da esquerda para direita logicamente  
+    unsigned long time_on   = 0;                                        //tempo ligado por bomba
+    TaskHandle_t handles[4] = {task_zero,task_one,task_two,task_three}; //manipuladores das tasks
+} pump_params;
+
+
+WiFiServer server(1234); //TODO: checar a comunicacao na porta
 
 //construtores
 void plotPointer(void);
@@ -116,6 +142,8 @@ void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K);
 void getTouch();
 void colorMix(void *pvParameters);
 void btnStart();
+void pumps(void *pvParameters);
+void fromPicker(void *pvParameters);
 
 void setup(void) {
   tft.init();
@@ -140,7 +168,7 @@ void setup(void) {
   btnStart();
 
   updateTime = millis();
-  rgb2cmyk(80,30,50);
+  rgb2cmyk(148,175,186);
   Serial.println(" ");
   Serial.println("MCU started.");
 
@@ -152,10 +180,23 @@ void setup(void) {
 
     }
     Serial.println("Wifi started.");
+    Serial.println(WiFi.localIP());
+    IPAddress myIp = WiFi.localIP();
+    rgb2cmyk_ip = "";
+    for (uint8_t a=0;a<4;a++){
+        rgb2cmyk_ip += String() + myIp[a];
+        if (a < 3){
+            rgb2cmyk_ip += ".";
+        }    
+    } 
 
-    //uint8_t convertido = round(255.0 * (1.0-((float)43/100.0))*(1.0-((float)10/100.0)));
-    //Serial.println(convertido);
-    cmyk2rgb(43, 30, 10, 10);
+    Wire.begin(21,22);
+    Wire.beginTransmission(0x27);
+    Wire.write(0xFF);
+    Wire.endTransmission();
+    cmyk2rgb(25, 23, 18, 11);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
 }
 
 void loop() {
@@ -181,8 +222,6 @@ void btnStart(){
   tft.setTextColor(TFT_WHITE);
   tft.drawString("Iniciar", 240/2-35, 95, 4);
   }
-  
-  //tft.fillRect(240/2-30, 90, 60, 20, tft.color565(255,0,0));
 }
 
 void colorMix(void *pvParameters){
@@ -213,25 +252,67 @@ R = 255 * (1-(43/100))*(1-(10/100)) = 130,815 ; arredondar para cima quando > 0.
 The R,G,B values are given in the range of 0..255.
 
 The red (R) color is calculated from the cyan (C) and black (K) colors:
-
 R = 255 × (1-C) × (1-K)
 
 The green color (G) is calculated from the magenta (M) and black (K) colors:
-
 G = 255 × (1-M) × (1-K)
 
 The blue color (B) is calculated from the yellow (Y) and black (K) colors:
-
 B = 255 × (1-Y) × (1-K)
 */
+    //uint8_t exemplo = round(255.0 * (1.0-((float)43/100.0))*(1.0-((float)10/100.0)));
     memset(RGBarray,0,sizeof(RGBarray));
     RGBarray[0] = round(RGB_MAX * (ONE_DOT-((float)C/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
     RGBarray[1] = round(RGB_MAX * (ONE_DOT-((float)M/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
     RGBarray[2] = round(RGB_MAX * (ONE_DOT-((float)Y/HUNDRED)) * (ONE_DOT-((float)K/HUNDRED)));
+}
 
-    //Serial.println(RGBarray[0]);
-    //Serial.println(RGBarray[1]);
-    //Serial.println(RGBarray[2]);
+void fromPicker(void *pvParameters){
+   /* Lógica invertida: o GND é o PCF, portanto o pino deve ser colocado em 0 para 
+   acionar os relés (addr: 0x27).
+   As tasks são tCyan, tMagent, tYellow e tBlack
+
+   RELES:
+    128    64     32     16
+   [ C ]  [ M ]  [ Y ]  [ K ]
+     7      6      5      4
+   */
+    uint8_t result[6];
+    uint8_t i = 0;
+    memset(result,0,sizeof(result));
+
+    while (true){
+        WiFiClient client = server.available();
+        if (client){
+            i = 0;
+            while (client.connected()){
+                //avalia se tem dados e controla o buffer
+                if (client.available() && i<6){
+                    result[i] = client.read();
+                    i = result[0] == '^' ? i+1 : 0;
+
+                    if (result[i] == '\n' && result[i-1] == '$'){
+                        client.println(0xFF);
+                    }
+                }
+            }
+            client.stop();
+        }
+        //TODO: atribuir as cores às variáveis que serão lidas na execução do botão iniciar.
+        Serial.println(result[0]);
+        memset(result,0,sizeof(result));
+    }
+    
+
+
+
+   //=============================================
+   xSemaphoreTake(myMutex,portMAX_DELAY);
+   pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_values[pump_params.pump_index]);
+   Wire.beginTransmission(PCF_ADDR);
+   Wire.write(pump_params.pcf_value);
+   Wire.endTransmission();
+   xSemaphoreGive(myMutex);
 }
 
 void getTouch(){
@@ -239,7 +320,7 @@ void getTouch(){
   if (tft.getTouch(&x,&y)){
     // 320 é Y, 240 é X
     //se x <= 50 & y <= 100
-    //VOLUME
+    //VOLUME (ml) esquerda e direita
     if (x <= FRAME_W && y <= FRAME_H){
       tft.setTextColor(TFT_WHITE);
       tft.drawCentreString(print_str, 120, 70, 4); 
@@ -309,7 +390,7 @@ void getTouch(){
       Serial.print("K: ");
       Serial.println(value[3]);
     }
-    // 75 até 200
+    // botão de iniciar
     else if ((x>240/2-45 && x<240/2+45) && (y>95 && y<95+25)){
         tft.fillRect(240/2-45, 95, 80, 20, tft.color565(255,0,0));
         tft.setTextColor(TFT_WHITE);
@@ -317,15 +398,9 @@ void getTouch(){
         delay(1000);
         tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
         tft.drawString("Iniciar", 240/2-35, 95, 4);
-        Serial.println("bingo");
         //TODO: chamar o start das bombas aqui
         
     }
-      //tft.fillCircle(x, y, 2, TFT_BLACK);
-      //Serial.print("x: ");
-      //Serial.println(x);
-      //Serial.print("y: ");
-      //Serial.println(y);
   }
 }
 
@@ -571,6 +646,8 @@ void plotPointer(void)
       }
       cmyk2rgb(value[0],value[1],value[2],value[3]);
       tft.fillRect(5, 130, 230, 20, tft.color565(RGBarray[0],RGBarray[1],RGBarray[2]));
+      tft.setTextColor(TFT_WHITE);
+      tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
     }
   }
 }
