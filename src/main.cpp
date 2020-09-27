@@ -88,6 +88,11 @@ resultado é a porcentagem de cada cor em relação ao volume.
 
 #define PCF_ADDR       0x27
 
+#define PUMP_CYAN      0
+#define PUMP_MAGENT    1
+#define PUMP_YELLOW    2
+#define PUMP_BLACK     3
+
 SemaphoreHandle_t myMutex;
 
 TaskHandle_t task_zero   = NULL;
@@ -98,25 +103,26 @@ TaskHandle_t task_three  = NULL;
 
 TFT_eSPI tft = TFT_eSPI();
 
-String vol          = "0";
+String labels[4] = {"cyan","magent","yellow","black"};
+String vol              = "0";
 
-float one_ml        = 2.141;
-float ltx           = 0;                  // Coordenada x do ponteiro analógico
+float one_ml            = 2.141;
+float ltx               = 0;                  // Coordenada x do ponteiro analógico
 
-uint8_t RGBarray[3] = {0};
-uint8_t RGBarrayOld = 0;                  //TODO: parece que vai sair...
+uint8_t RGBarray[3]     = {0};
+uint8_t RGBarrayOld     = 0;                  //TODO: parece que vai sair...
 
-uint16_t osx        = 120, osy = 120;     // Guarda coordenadas x e y
+uint16_t osx            = 120, osy = 120;     // Guarda coordenadas x e y
 
-uint32_t updateTime = 0;                  // intervalo para update
+uint32_t updateTime     = 0;                  // intervalo para update
 
-int old_analog      =  -999;              // Value last displayed
-int old_digital     = -999;               // Value last displayed
-int value[4]        = {0, 0, 0, 0};       //variável que armazena os valores CMYK exibidos no display
-int old_value[4]    = { -1, -1, -1, -1};
-int vol_in_ml       = 10; 
+int old_analog          =  -999;              // Value last displayed
+int old_digital         = -999;               // Value last displayed
+int value[4]            = {0, 0, 0, 0};       //variável que armazena os valores CMYK exibidos no display
+int old_value[4]        = { -1, -1, -1, -1};
+int vol_in_ml           = 10; 
 
-boolean SwitchOn    = false;
+boolean pump_is_running = false;
 
 char print_str[7];
 
@@ -124,10 +130,10 @@ String rgb2cmyk_ip = "0.0.0.0";
 
 struct pump_t {
     uint8_t pcf_value       = 255;                                      // estados dos pinos
-    uint8_t pump_index      = 0;                                        // bomba a ligar
-    uint8_t pumps_values[4] = {7,6,5,4};                                // apenas para ordenar da esquerda para direita logicamente  
-    unsigned long time_on   = 0;                                        //tempo ligado por bomba
+    uint8_t pumps_bits[4]   = {7,6,5,4};                                // apenas para ordenar da esquerda para direita logicamente  
     TaskHandle_t handles[4] = {task_zero,task_one,task_two,task_three}; //manipuladores das tasks
+    uint8_t running         = 0;                                        //cada task incrementa e decrementa. 0 é parado.
+    float times[4]          = {0,0,0,0};                                //alimentado pela função time_per_pump
 } pump_params;
 
 
@@ -143,6 +149,8 @@ void colorMix(void *pvParameters);
 void btnStart();
 void pumps(void *pvParameters);
 void fromPicker(void *pvParameters);
+void pump(void *pvParameters);
+void time_per_pump(); //TODO: implementar e alimentar a variável times em pump_t
 
 WiFiServer server(1234); //TODO: checar a comunicacao na porta
 
@@ -202,6 +210,11 @@ void setup(void) {
     tft.setTextColor(TFT_WHITE);
     tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
 
+    /* Essa tarefa recebe os valores CMYK do picker e atribui à variável
+    values[n]. Fazendo isso, automaticamente a interface será atualizada.
+    O início da mistura só pode ser feito pelo botão iniciar para não ter
+    risco de ataque pela rede.
+    */
     xTaskCreatePinnedToCore(fromPicker,"fromPicker",10000,NULL,0,NULL,0);
 }
 
@@ -218,6 +231,22 @@ void loop() {
     //renderiza o ponteiro analógico
     plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
   }
+}
+
+//pegar o parametro como definição da bomba a acionar
+void pump(void *pvParameters){
+   uint8_t &pcf_bit = *(uint8_t*) pvParameters; //bit do pcf a manipular
+   xSemaphoreTake(myMutex,portMAX_DELAY); //protege tudo que for ser manipulado
+   pump_params.running += 1; //a partir de agora nenhuma alteração é permitida até voltar a 0.
+   pump_params.pcf_value = pump_params.pcf_value&~(1<<pcf_bit); //baixa o bit (liga com 0)
+   Wire.beginTransmission(PCF_ADDR); //inicia comunicação i2c no endereço do PCF
+   Wire.write(pump_params.pcf_value); //escreve o valor recém modificado
+   Wire.endTransmission(); //finaliza a transmissão
+   xSemaphoreGive(myMutex); //libera os recursos
+
+   //TODO: implementar tempo e desligamento
+   //O valor de tempo ligado está armazenado em pump_params.times[x]
+   vTaskDelete(NULL); //finaliza a task e se exclui
 }
 
 void btnStart(){
@@ -306,32 +335,22 @@ void fromPicker(void *pvParameters){
             client.stop();
             //vTaskDelay(pdMS_TO_TICKS(200)); //TODO: apagar?
         }
-        //client.stop();
-        //TODO: atribuir as cores às variáveis que serão lidas na execução do botão iniciar.
-        if (result[0] == 0x5e){
-           for (uint k=1;k<5;k++){
-               value[k-1] = result[k];
+
+        if (result[0] == 0x5e && pump_params.running == 0){
+           for (uint k=0;k<4;k++){
+               value[k] = result[k+1]; //esse incremento é porque a msg começa na posição 1
+               //TODO: alimentar pump_params.times[x] antes de criar as tasks
+               //a função que fará essa alimentação é a time_per_pump()
+               xTaskCreatePinnedToCore(pump,labels[k],10000,(void*) k+4,0,&pump_params.handles[k],0);
            }
             memset(result,0,sizeof(result));
-        }
-        
+        }    
     }
-    
-
-
-
-   //=============================================
-   //xSemaphoreTake(myMutex,portMAX_DELAY);
-   //pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_values[pump_params.pump_index]);
-  // Wire.beginTransmission(PCF_ADDR);
-   //Wire.write(pump_params.pcf_value);
-   //Wire.endTransmission();
-   //xSemaphoreGive(myMutex);
 }
 
 void getTouch(){
   uint16_t x,y = 0;
-  if (tft.getTouch(&x,&y)){
+  if (tft.getTouch(&x,&y) && pump_params.running == 0){
     // 320 é Y, 240 é X
     //se x <= 50 & y <= 100
     //VOLUME (ml) esquerda e direita
@@ -405,7 +424,7 @@ void getTouch(){
       Serial.println(value[3]);
     }
     // botão de iniciar
-    else if ((x>240/2-45 && x<240/2+45) && (y>95 && y<95+25)){
+    else if ((x>240/2-45 && x<240/2+45) && (y>95 && y<95+25) && pump_params.running == 0){
         tft.fillRect(240/2-45, 95, 80, 20, tft.color565(255,0,0));
         tft.setTextColor(TFT_WHITE);
         tft.drawString("Iniciar", 240/2-35, 95, 4);
