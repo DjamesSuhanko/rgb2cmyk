@@ -103,7 +103,8 @@ String vol          = "0";
 float one_ml        = 2.141;
 float ltx           = 0;                  // Coordenada x do ponteiro analógico
 
-uint8_t RGBarray[3];
+uint8_t RGBarray[3] = {0};
+uint8_t RGBarrayOld = 0;                  //TODO: parece que vai sair...
 
 uint16_t osx        = 120, osy = 120;     // Guarda coordenadas x e y
 
@@ -130,8 +131,6 @@ struct pump_t {
 } pump_params;
 
 
-WiFiServer server(1234); //TODO: checar a comunicacao na porta
-
 //construtores
 void plotPointer(void);
 void plotLinear(char *label, int x, int y);
@@ -144,6 +143,8 @@ void colorMix(void *pvParameters);
 void btnStart();
 void pumps(void *pvParameters);
 void fromPicker(void *pvParameters);
+
+WiFiServer server(1234); //TODO: checar a comunicacao na porta
 
 void setup(void) {
   tft.init();
@@ -190,6 +191,9 @@ void setup(void) {
         }    
     } 
 
+    server.begin();
+    Serial.println("Socket started.");
+
     Wire.begin(21,22);
     Wire.beginTransmission(0x27);
     Wire.write(0xFF);
@@ -197,6 +201,8 @@ void setup(void) {
     cmyk2rgb(25, 23, 18, 11);
     tft.setTextColor(TFT_WHITE);
     tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
+
+    xTaskCreatePinnedToCore(fromPicker,"fromPicker",10000,NULL,0,NULL,0);
 }
 
 void loop() {
@@ -268,6 +274,8 @@ B = 255 × (1-Y) × (1-K)
 }
 
 void fromPicker(void *pvParameters){
+    Serial.println("Start listening...");
+
    /* Lógica invertida: o GND é o PCF, portanto o pino deve ser colocado em 0 para 
    acionar os relés (addr: 0x27).
    As tasks são tCyan, tMagent, tYellow e tBlack
@@ -277,42 +285,48 @@ void fromPicker(void *pvParameters){
    [ C ]  [ M ]  [ Y ]  [ K ]
      7      6      5      4
    */
-    uint8_t result[6];
     uint8_t i = 0;
+    uint8_t result[6];
     memset(result,0,sizeof(result));
 
     while (true){
         WiFiClient client = server.available();
         if (client){
+            Serial.print("RGBarray[0]: ");
+            Serial.println(RGBarray[2]);
             i = 0;
             while (client.connected()){
                 //avalia se tem dados e controla o buffer
                 if (client.available() && i<6){
                     result[i] = client.read();
-                    i = result[0] == '^' ? i+1 : 0;
-
-                    if (result[i] == '\n' && result[i-1] == '$'){
-                        client.println(0xFF);
-                    }
+                    i = result[0] == 94 ? i+1 : 0;
+                    //Serial.println(result[0]);
                 }
             }
             client.stop();
+            //vTaskDelay(pdMS_TO_TICKS(200)); //TODO: apagar?
         }
+        //client.stop();
         //TODO: atribuir as cores às variáveis que serão lidas na execução do botão iniciar.
-        Serial.println(result[0]);
-        memset(result,0,sizeof(result));
+        if (result[0] == 0x5e){
+           for (uint k=1;k<5;k++){
+               value[k-1] = result[k];
+           }
+            memset(result,0,sizeof(result));
+        }
+        
     }
     
 
 
 
    //=============================================
-   xSemaphoreTake(myMutex,portMAX_DELAY);
-   pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_values[pump_params.pump_index]);
-   Wire.beginTransmission(PCF_ADDR);
-   Wire.write(pump_params.pcf_value);
-   Wire.endTransmission();
-   xSemaphoreGive(myMutex);
+   //xSemaphoreTake(myMutex,portMAX_DELAY);
+   //pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_values[pump_params.pump_index]);
+  // Wire.beginTransmission(PCF_ADDR);
+   //Wire.write(pump_params.pcf_value);
+   //Wire.endTransmission();
+   //xSemaphoreGive(myMutex);
 }
 
 void getTouch(){
@@ -600,7 +614,7 @@ void plotLinear(char *label, int x, int y)
     tft.drawFastHLine(x + 20, y + 27 + i, 9, TFT_BLACK);
   }
   
-  tft.drawCentreString("---", x + w / 2, y + 155 - 18, 2);
+  tft.drawCentreString("--%", x + w / 2, y + 155 - 18, 2);
 }
 
 // #########################################################################
