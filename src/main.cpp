@@ -49,6 +49,8 @@ Y = (1-B'-K) / (1-K)
 resultado é a porcentagem de cada cor em relação ao volume.
  */
 
+//TODO: trocar para modo AP ou AP/STA
+
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
@@ -110,7 +112,6 @@ float one_ml            = 2141;
 float ltx               = 0;                  // Coordenada x do ponteiro analógico
 
 uint8_t RGBarray[3]     = {0};
-uint8_t RGBarrayOld     = 0;                  //TODO: parece que vai sair...
 
 uint16_t osx            = 120, osy = 120;     // Guarda coordenadas x e y
 
@@ -133,7 +134,7 @@ struct pump_t {
     uint8_t pumps_bits[4]   = {7,6,5,4};                                // apenas para ordenar da esquerda para direita logicamente  
     TaskHandle_t handles[4] = {task_zero,task_one,task_two,task_three}; //manipuladores das tasks
     uint8_t running         = 0;                                        //cada task incrementa e decrementa. 0 é parado.
-    unsigned long  times[4] = {0,0,0,0};                                //alimentado pela função time_per_pump
+    unsigned long  times[4] = {0,0,0,0};                                
 } pump_params;
 
 
@@ -148,9 +149,8 @@ void getTouch();
 void btnStart();
 void fromPicker(void *pvParameters);
 void pump(void *pvParameters);
-void time_per_pump(); //TODO: implementar e alimentar a variável times em pump_t
 
-WiFiServer server(1234); //TODO: checar a comunicacao na porta
+WiFiServer server(1234); 
 
 void setup(void) {
   tft.init();
@@ -216,8 +216,6 @@ void setup(void) {
     xTaskCreatePinnedToCore(fromPicker,"fromPicker",10000,NULL,0,NULL,0);
 
     myMutex = xSemaphoreCreateMutex();
-
-    //xTaskCreatePinnedToCore(pump,"teste",10000,(void*) 0,0,&task_zero,0);
 }
 
 void loop() {
@@ -225,13 +223,11 @@ void loop() {
   if (updateTime <= millis()) {
     updateTime = millis() + 25; // limitador da velocidade de update
     
-    //Será necessário uma função que receba o RGB para passar à função rgb2cmyk (TODO)
-    //rgb2cmyk(80,30,50);
     //renderiza os ponteiros vermelhos das colunas
     plotPointer(); // It takes aout 3.5ms to plot each gauge for a 1 pixel move, 21ms for 6 gauges
      
     //renderiza o ponteiro analógico
-    plotNeedle(vol_in_ml, 10); //TODO: testar com 10 no segundo parâmetro
+    plotNeedle(vol_in_ml, 10); 
   }
 }
 
@@ -347,7 +343,6 @@ void fromPicker(void *pvParameters){
                 }
             }
             client.stop();
-            //vTaskDelay(pdMS_TO_TICKS(200)); //TODO: apagar?
         }
 
         if (result[0] == 0x5e && pump_params.running == 0){
