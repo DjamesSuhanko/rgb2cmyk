@@ -145,9 +145,7 @@ void analogMeter();
 void rgb2cmyk(uint8_t R, uint8_t G, uint8_t B);
 void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K);
 void getTouch();
-void colorMix(void *pvParameters);
 void btnStart();
-void pumps(void *pvParameters);
 void fromPicker(void *pvParameters);
 void pump(void *pvParameters);
 void time_per_pump(); //TODO: implementar e alimentar a variável times em pump_t
@@ -177,7 +175,7 @@ void setup(void) {
   btnStart();
 
   updateTime = millis();
-  rgb2cmyk(148,175,186);
+  rgb2cmyk(127,127,127);
   Serial.println(" ");
   Serial.println("MCU started.");
 
@@ -206,7 +204,7 @@ void setup(void) {
     Wire.beginTransmission(0x27);
     Wire.write(0xFF);
     Wire.endTransmission();
-    cmyk2rgb(25, 23, 18, 11);
+    cmyk2rgb(0, 0, 0, 0);
     tft.setTextColor(TFT_WHITE);
     tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
 
@@ -216,6 +214,10 @@ void setup(void) {
     risco de ataque pela rede.
     */
     xTaskCreatePinnedToCore(fromPicker,"fromPicker",10000,NULL,0,NULL,0);
+
+    myMutex = xSemaphoreCreateMutex();
+
+    //xTaskCreatePinnedToCore(pump,"teste",10000,(void*) 0,0,&task_zero,0);
 }
 
 void loop() {
@@ -235,24 +237,31 @@ void loop() {
 
 //pegar o parametro como definição da bomba a acionar
 void pump(void *pvParameters){
-   uint8_t &color_bit = *(uint8_t*) pvParameters; //bit do pcf a manipular
+   int color_bit = (int) pvParameters;
 
-   xSemaphoreTake(myMutex,portMAX_DELAY); //protege tudo que for ser manipulado
+   vTaskDelay(pdMS_TO_TICKS(200)); //apenas para entrar em fila com as outras tasks
+   
+   if( myMutex == NULL )
+   {
+       vTaskDelete(NULL);
+   }
 
+   xSemaphoreTake(myMutex,portMAX_DELAY);
    pump_params.running += 1; //a partir de agora nenhuma alteração é permitida até voltar a 0.
-   pump_params.times[color_bit] = vol_in_ml*(value[color_bit]/100)*one_ml; //tempo de execução da bomba
+   pump_params.times[color_bit] = vol_in_ml*(value[color_bit])*one_ml/100; //tempo de execução da bomba
    pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_bits[color_bit]); //baixa o bit (liga com 0)
    
    Wire.beginTransmission(PCF_ADDR); //inicia comunicação i2c no endereço do PCF
    Wire.write(pump_params.pcf_value); //escreve o valor recém modificado
    Wire.endTransmission(); //finaliza a transmissão
+   Serial.println(pump_params.times[color_bit]);
+   xSemaphoreGive(myMutex);
 
-   xSemaphoreGive(myMutex); //libera os recursos
+   
 
    vTaskDelay(pdMS_TO_TICKS(pump_params.times[color_bit])); //executa o delay conforme calculado
 
    xSemaphoreTake(myMutex,portMAX_DELAY);
-
    pump_params.pcf_value = pump_params.pcf_value|(1<<pump_params.pumps_bits[color_bit]);
 
    Wire.beginTransmission(PCF_ADDR);
@@ -261,7 +270,6 @@ void pump(void *pvParameters){
 
    pump_params.running -= 1;
    pump_params.times[color_bit] = 0;
-
    xSemaphoreGive(myMutex);
 
    vTaskDelete(NULL); //finaliza a task e se exclui
@@ -271,22 +279,10 @@ void btnStart(){
   uint16_t x,y = 0;
   if (!tft.getTouch(&x,&y)){
   tft.fillRect(240/2-48, 93, 80, 20, tft.color565(127,90,80));
-  tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
+  tft.fillRect(240/2-45, 95, 80, 25, tft.color565(0x8d,0xa6,0xb4));
   tft.setTextColor(TFT_WHITE);
   tft.drawString("Iniciar", 240/2-35, 95, 4);
   }
-}
-
-void colorMix(void *pvParameters){
-    /*
-    Essa task liga, aguarda o tempo e desliga o motor. Ela será executada quando houver
-    uma chamada diferente de 0 para CMYK e se exclui ao final.
-    Ela lerá os valores de CMYK da variável values. Para ser executada, deve-se clicar sobre o
-    valor de volume no meter analógico.
-    TODO: fazer uma trava para não executar múltiplas vezes. 
-    boolean task_is_running = true evitará que se execute múltiplas vezes.
-    getTouch pode fazer um delay ao perceber o toque no volume.
-    */
 }
 
 void cmyk2rgb(uint8_t C, uint8_t M, uint8_t Y, uint8_t K){
@@ -356,10 +352,7 @@ void fromPicker(void *pvParameters){
 
         if (result[0] == 0x5e && pump_params.running == 0){
            for (uint k=0;k<4;k++){
-               value[k] = result[k+1]; //esse incremento é porque a msg começa na posição 1
-               //TODO: alimentar pump_params.times[x] antes de criar as tasks
-               //a função que fará essa alimentação é a time_per_pump()
-               xTaskCreatePinnedToCore(pump,labels[k],10000,(void*) k,0,&pump_params.handles[k],0);
+               value[k] = result[k+1]; //esse incremento é porque a msg começa na posição 1 (^CMYK$)
            }
             memset(result,0,sizeof(result));
         }    
@@ -447,10 +440,12 @@ void getTouch(){
         tft.setTextColor(TFT_WHITE);
         tft.drawString("Iniciar", 240/2-35, 95, 4);
         delay(1000);
-        tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
+        tft.fillRect(240/2-45, 95, 80, 25, tft.color565(0x8d,0xa6,0xb4));
         tft.drawString("Iniciar", 240/2-35, 95, 4);
-        //TODO: chamar o start das bombas aqui - checar se pump_params.running já é > 0
-        
+
+        for (int j=0; j<4;j++){
+            xTaskCreatePinnedToCore(pump,labels[j],10000,(void*) j,0,&pump_params.handles[j],0);
+        }      
     }
   }
 }
@@ -506,14 +501,14 @@ void analogMeter()
 
     // Green zone limits
     if (i >= 0 && i < 25) {
-      tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_GREEN);
-      tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_GREEN);
+      tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_ORANGE);
+      tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_ORANGE);
     }
 
     // Orange zone limits
     if (i >= 25 && i < 50) {
-      tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_ORANGE);
-      tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_ORANGE);
+      tft.fillTriangle(x0, y0, x1, y1, x2, y2, tft.color565(0x8d,0xa6,0xb4));
+      tft.fillTriangle(x1, y1, x2, y2, x3, y3, tft.color565(0x8d,0xa6,0xb4));
     }
 
     // Short scale tick length
@@ -600,7 +595,7 @@ void plotNeedle(int value, byte ms_delay)
     tft.drawLine(120 + 20 * ltx + 1, 140 - 20, osx + 1, osy, TFT_WHITE);
 
     // Re-plot text under needle
-    tft.setTextColor(TFT_BLACK);
+    tft.setTextColor(tft.color565(0x8d,0xa6,0xb4));
     String vol_str = String(vol_in_ml);
     vol_str = vol_str + " ml";
     
@@ -637,7 +632,7 @@ void plotLinear(char *label, int x, int y)
   int w = 60;
   tft.drawRect(x, y, w, 155, TFT_GREY);
   tft.fillRect(x+2, y + 19, w-3, 155 - 38, TFT_WHITE);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setTextColor(tft.color565(0x8d,0xa6,0xb4), TFT_BLACK);
   tft.drawCentreString(label, x + w / 2, y + 2, 2);
 
   //linhas percentuais da coluna
