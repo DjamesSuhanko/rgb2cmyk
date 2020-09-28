@@ -103,10 +103,10 @@ TaskHandle_t task_three  = NULL;
 
 TFT_eSPI tft = TFT_eSPI();
 
-String labels[4] = {"cyan","magent","yellow","black"};
+char *labels[4] = {"cyan","magent","yellow","black"};
 String vol              = "0";
 
-float one_ml            = 2.141;
+float one_ml            = 2141;
 float ltx               = 0;                  // Coordenada x do ponteiro analógico
 
 uint8_t RGBarray[3]     = {0};
@@ -133,7 +133,7 @@ struct pump_t {
     uint8_t pumps_bits[4]   = {7,6,5,4};                                // apenas para ordenar da esquerda para direita logicamente  
     TaskHandle_t handles[4] = {task_zero,task_one,task_two,task_three}; //manipuladores das tasks
     uint8_t running         = 0;                                        //cada task incrementa e decrementa. 0 é parado.
-    float times[4]          = {0,0,0,0};                                //alimentado pela função time_per_pump
+    unsigned long  times[4] = {0,0,0,0};                                //alimentado pela função time_per_pump
 } pump_params;
 
 
@@ -235,17 +235,35 @@ void loop() {
 
 //pegar o parametro como definição da bomba a acionar
 void pump(void *pvParameters){
-   uint8_t &pcf_bit = *(uint8_t*) pvParameters; //bit do pcf a manipular
+   uint8_t &color_bit = *(uint8_t*) pvParameters; //bit do pcf a manipular
+
    xSemaphoreTake(myMutex,portMAX_DELAY); //protege tudo que for ser manipulado
+
    pump_params.running += 1; //a partir de agora nenhuma alteração é permitida até voltar a 0.
-   pump_params.pcf_value = pump_params.pcf_value&~(1<<pcf_bit); //baixa o bit (liga com 0)
+   pump_params.times[color_bit] = vol_in_ml*(value[color_bit]/100)*one_ml; //tempo de execução da bomba
+   pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_bits[color_bit]); //baixa o bit (liga com 0)
+   
    Wire.beginTransmission(PCF_ADDR); //inicia comunicação i2c no endereço do PCF
    Wire.write(pump_params.pcf_value); //escreve o valor recém modificado
    Wire.endTransmission(); //finaliza a transmissão
+
    xSemaphoreGive(myMutex); //libera os recursos
 
-   //TODO: implementar tempo e desligamento
-   //O valor de tempo ligado está armazenado em pump_params.times[x]
+   vTaskDelay(pdMS_TO_TICKS(pump_params.times[color_bit])); //executa o delay conforme calculado
+
+   xSemaphoreTake(myMutex,portMAX_DELAY);
+
+   pump_params.pcf_value = pump_params.pcf_value|(1<<pump_params.pumps_bits[color_bit]);
+
+   Wire.beginTransmission(PCF_ADDR);
+   Wire.write(pump_params.pcf_value); 
+   Wire.endTransmission();
+
+   pump_params.running -= 1;
+   pump_params.times[color_bit] = 0;
+
+   xSemaphoreGive(myMutex);
+
    vTaskDelete(NULL); //finaliza a task e se exclui
 }
 
@@ -341,7 +359,7 @@ void fromPicker(void *pvParameters){
                value[k] = result[k+1]; //esse incremento é porque a msg começa na posição 1
                //TODO: alimentar pump_params.times[x] antes de criar as tasks
                //a função que fará essa alimentação é a time_per_pump()
-               xTaskCreatePinnedToCore(pump,labels[k],10000,(void*) k+4,0,&pump_params.handles[k],0);
+               xTaskCreatePinnedToCore(pump,labels[k],10000,(void*) k,0,&pump_params.handles[k],0);
            }
             memset(result,0,sizeof(result));
         }    
@@ -431,7 +449,7 @@ void getTouch(){
         delay(1000);
         tft.fillRect(240/2-45, 95, 80, 25, tft.color565(170,170,60));
         tft.drawString("Iniciar", 240/2-35, 95, 4);
-        //TODO: chamar o start das bombas aqui
+        //TODO: chamar o start das bombas aqui - checar se pump_params.running já é > 0
         
     }
   }
