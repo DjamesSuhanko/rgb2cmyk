@@ -149,6 +149,7 @@ void getTouch();
 void btnStart();
 void fromPicker(void *pvParameters);
 void pump(void *pvParameters);
+void rgbToHexaString();
 
 WiFiServer server(1234); 
 
@@ -190,13 +191,14 @@ void setup(void) {
     Serial.println("Wifi started.");
     Serial.println(WiFi.localIP());
     IPAddress myIp = WiFi.localIP();
-    rgb2cmyk_ip = "";
+    hexaColor = "";
+    /*
     for (uint8_t a=0;a<4;a++){
-        rgb2cmyk_ip += String() + myIp[a];
+        hexaColor += String() + myIp[a];
         if (a < 3){
-            rgb2cmyk_ip += ".";
+            hexaColor += ".";
         }    
-    } 
+    } */
 
     server.begin();
     Serial.println("Socket started.");
@@ -207,7 +209,8 @@ void setup(void) {
     Wire.endTransmission();
     cmyk2rgb(0, 0, 0, 0);
     tft.setTextColor(TFT_WHITE);
-    tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
+    rgbToHexaString();
+    tft.drawCentreString(hexaColor, 240/2, 130, 4);
 
     /* Essa tarefa recebe os valores CMYK do picker e atribui à variável
     values[n]. Fazendo isso, automaticamente a interface será atualizada.
@@ -270,6 +273,12 @@ void pump(void *pvParameters){
    xSemaphoreGive(myMutex);
 
    vTaskDelete(NULL); //finaliza a task e se exclui
+}
+
+void rgbToHexaString(){
+  char colorBuffer[9];
+  snprintf(colorBuffer, sizeof(colorBuffer), "%02X %02X %02X", RGBarray[0], RGBarray[1], RGBarray[2]);
+  hexaColor = "#" + String(colorBuffer);
 }
 
 void btnStart(){
@@ -690,7 +699,8 @@ void plotPointer(void)
       cmyk2rgb(value[0],value[1],value[2],value[3]);
       tft.fillRect(5, 130, 230, 20, tft.color565(RGBarray[0],RGBarray[1],RGBarray[2]));
       tft.setTextColor(TFT_WHITE);
-      tft.drawCentreString(rgb2cmyk_ip, 240/2, 130, 4);
+      rgbToHexaString();
+      tft.drawCentreString(hexaColor, 240/2, 130, 4);
     }
   }
 }
