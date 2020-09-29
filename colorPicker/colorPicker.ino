@@ -5,11 +5,11 @@
 
 #define OLED_UPDATE_INTERVAL 500  
 
-const char* ssid       = "SuhankoFamily"; 
-const char* password   = "fsjmr112"; 
+const char* ssid       = "colorMixer"; 
+const char* password   = "dobitaobyte"; 
 
 const uint16_t port = 1234;
-const char * host = "192.168.1.209"; // TODO: passar para o modo AP
+const char * host = "192.168.4.1"; // TODO: passar para o modo AP
 
 TCS34725 tcs;
 unsigned long interval = millis();
