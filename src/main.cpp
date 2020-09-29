@@ -60,8 +60,8 @@ resultado é a porcentagem de cada cor em relação ao volume.
 
 #define TFT_GREY 0x5AEB
 
-#define SSID "SuhankoFamily"
-#define PASSWD "fsjmr112"
+#define SSID "colorMixer"
+#define PASSWD "dobitaobyte"
 
 #define DISPLAY_WIDTH  240
 #define DISPLAY_HEIGHT 320
@@ -111,7 +111,7 @@ String vol              = "0";
 float one_ml            = 2141;
 float ltx               = 0;                  // Coordenada x do ponteiro analógico
 
-uint8_t RGBarray[3]     = {0};
+uint8_t RGBarray[3]     = {0}; 
 
 uint16_t osx            = 120, osy = 120;     // Guarda coordenadas x e y
 
@@ -121,13 +121,13 @@ int old_analog          =  -999;              // Value last displayed
 int old_digital         = -999;               // Value last displayed
 int value[4]            = {0, 0, 0, 0};       //variável que armazena os valores CMYK exibidos no display
 int old_value[4]        = { -1, -1, -1, -1};
-int vol_in_ml           = 10; 
+int vol_in_ml           = 1; 
 
 boolean pump_is_running = false;
 
 char print_str[7];
 
-String rgb2cmyk_ip = "0.0.0.0";
+String hexaColor = "ColorMixer";
 
 struct pump_t {
     uint8_t pcf_value       = 255;                                      // estados dos pinos
@@ -179,13 +179,14 @@ void setup(void) {
   Serial.println(" ");
   Serial.println("MCU started.");
 
-  WiFi.begin(SSID,PASSWD);
+  /*WiFi.begin(SSID,PASSWD);
     //...e aguardamos até que esteja concluída.
     while (WiFi.status() != WL_CONNECTED) {
 
         delay(1000);
 
-    }
+    }*/
+    WiFi.softAP(SSID,PASSWD);
     Serial.println("Wifi started.");
     Serial.println(WiFi.localIP());
     IPAddress myIp = WiFi.localIP();
@@ -338,6 +339,7 @@ void fromPicker(void *pvParameters){
                 //avalia se tem dados e controla o buffer
                 if (client.available() && i<6){
                     result[i] = client.read();
+                    Serial.println(result[i]);
                     i = result[0] == 94 ? i+1 : 0;
                     //Serial.println(result[0]);
                 }
@@ -363,13 +365,13 @@ void getTouch(){
     if (x <= FRAME_W && y <= FRAME_H){
       tft.setTextColor(TFT_WHITE);
       tft.drawCentreString(print_str, 120, 70, 4); 
-      vol_in_ml = vol_in_ml >14 ? vol_in_ml-5 : vol_in_ml-1;
+      vol_in_ml = vol_in_ml >0 ? vol_in_ml-1 : 0;
     }
     //x >= 240-50 & y <= 100
     else if (x >= ML_PLUS_X && (y <= FRAME_H)){
       tft.setTextColor(TFT_WHITE);
       tft.drawCentreString(print_str, 120, 70, 4); 
-      vol_in_ml = vol_in_ml < 96 ? vol_in_ml+5 : vol_in_ml+1;
+      vol_in_ml = vol_in_ml < 100 ? vol_in_ml+1 : 100;
     }
     /* Os meters estão assim:
      C   M   Y   K
@@ -568,8 +570,8 @@ void plotNeedle(int value, byte ms_delay)
   while (!(value == old_analog)) {
     if (old_analog < value) old_analog++;
     else old_analog--;
-    if (vol_in_ml <9){
-      vol_in_ml = 10;
+    if (vol_in_ml <1){
+      vol_in_ml = 0;
     }
     else if (vol_in_ml > 100){
       vol_in_ml = 100;
