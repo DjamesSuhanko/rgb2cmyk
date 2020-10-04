@@ -95,12 +95,12 @@ resultado é a porcentagem de cada cor em relação ao volume.
 #define PUMP_YELLOW    2
 #define PUMP_BLACK     3
 
-SemaphoreHandle_t myMutex;
+SemaphoreHandle_t myMutex = NULL;
 
-TaskHandle_t task_zero   = NULL;
-TaskHandle_t task_one    = NULL;
-TaskHandle_t task_two    = NULL;
-TaskHandle_t task_three  = NULL;
+TaskHandle_t task_zero    = NULL;
+TaskHandle_t task_one     = NULL;
+TaskHandle_t task_two     = NULL;
+TaskHandle_t task_three   = NULL;
 
 
 TFT_eSPI tft = TFT_eSPI();
@@ -154,6 +154,9 @@ void rgbToHexaString();
 WiFiServer server(1234); 
 
 void setup(void) {
+  //cria o mutex. Fácil de esquecer, mas sem isso é reset na certa, quando colidir a requisição.
+  vSemaphoreCreateBinary(myMutex);
+
   tft.init();
   tft.setRotation(0); // 0 ou 2? Depende da posição do display, mas tem que ser vertical
   uint16_t calData[5] = { 331, 3490, 384, 3477, 6 };
@@ -176,9 +179,9 @@ void setup(void) {
   btnStart();
 
   updateTime = millis();
-  rgb2cmyk(127,127,127);
-  Serial.println(" ");
-  Serial.println("MCU started.");
+  //rgb2cmyk(0,0,0);
+  //Serial.println(" ");
+  //Serial.println("MCU started.");
 
   /*WiFi.begin(SSID,PASSWD);
     //...e aguardamos até que esteja concluída.
@@ -188,8 +191,8 @@ void setup(void) {
 
     }*/
     WiFi.softAP(SSID,PASSWD);
-    Serial.println("Wifi started.");
-    Serial.println(WiFi.localIP());
+    //Serial.println("Wifi started.");
+    //Serial.println(WiFi.localIP());
     IPAddress myIp = WiFi.localIP();
     hexaColor = "";
     /*
@@ -201,10 +204,10 @@ void setup(void) {
     } */
 
     server.begin();
-    Serial.println("Socket started.");
+    //Serial.println("Socket started.");
 
     Wire.begin(21,22);
-    Wire.beginTransmission(0x27);
+    Wire.beginTransmission(PCF_ADDR);
     Wire.write(0xFF);
     Wire.endTransmission();
     cmyk2rgb(0, 0, 0, 0);
@@ -218,8 +221,6 @@ void setup(void) {
     risco de ataque pela rede.
     */
     xTaskCreatePinnedToCore(fromPicker,"fromPicker",10000,NULL,0,NULL,0);
-
-    myMutex = xSemaphoreCreateMutex();
 }
 
 void loop() {
@@ -240,37 +241,37 @@ void pump(void *pvParameters){
    int color_bit = (int) pvParameters;
 
    vTaskDelay(pdMS_TO_TICKS(200)); //apenas para entrar em fila com as outras tasks
+
+   xSemaphoreTake(myMutex,portMAX_DELAY);
+   if (value[color_bit] > 0){
+        pump_params.running += 1; //a partir de agora nenhuma alteração é permitida até voltar a 0.
+        pump_params.times[color_bit] = vol_in_ml*(value[color_bit])*one_ml/100; //tempo de execução da bomba
+
+        pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_bits[color_bit]); //baixa o bit (liga com 0)
    
-   if( myMutex == NULL )
-   {
-       vTaskDelete(NULL);
+        Wire.beginTransmission(PCF_ADDR); //inicia comunicação i2c no endereço do PCF
+        Wire.write(pump_params.pcf_value); //escreve o valor recém modificado
+        Wire.endTransmission(); //finaliza a transmissão
+        //Serial.println(pump_params.times[color_bit]);
    }
-
-   xSemaphoreTake(myMutex,portMAX_DELAY);
-   pump_params.running += 1; //a partir de agora nenhuma alteração é permitida até voltar a 0.
-   pump_params.times[color_bit] = vol_in_ml*(value[color_bit])*one_ml/100; //tempo de execução da bomba
-   pump_params.pcf_value = pump_params.pcf_value&~(1<<pump_params.pumps_bits[color_bit]); //baixa o bit (liga com 0)
-   
-   Wire.beginTransmission(PCF_ADDR); //inicia comunicação i2c no endereço do PCF
-   Wire.write(pump_params.pcf_value); //escreve o valor recém modificado
-   Wire.endTransmission(); //finaliza a transmissão
-   Serial.println(pump_params.times[color_bit]);
    xSemaphoreGive(myMutex);
 
    
 
-   vTaskDelay(pdMS_TO_TICKS(pump_params.times[color_bit])); //executa o delay conforme calculado
+    vTaskDelay(pdMS_TO_TICKS(pump_params.times[color_bit])); //executa o delay conforme calculado
+    
+    xSemaphoreTake(myMutex,portMAX_DELAY);
+    if (value[color_bit] > 0){
+        pump_params.pcf_value = pump_params.pcf_value|(1<<pump_params.pumps_bits[color_bit]);
 
-   xSemaphoreTake(myMutex,portMAX_DELAY);
-   pump_params.pcf_value = pump_params.pcf_value|(1<<pump_params.pumps_bits[color_bit]);
+        Wire.beginTransmission(PCF_ADDR);
+         Wire.write(pump_params.pcf_value); 
+         Wire.endTransmission();
 
-   Wire.beginTransmission(PCF_ADDR);
-   Wire.write(pump_params.pcf_value); 
-   Wire.endTransmission();
-
-   pump_params.running -= 1;
-   pump_params.times[color_bit] = 0;
-   xSemaphoreGive(myMutex);
+         pump_params.running -= 1;
+         pump_params.times[color_bit] = 0;
+    }
+    xSemaphoreGive(myMutex);
 
    vTaskDelete(NULL); //finaliza a task e se exclui
 }
@@ -323,7 +324,7 @@ B = 255 × (1-Y) × (1-K)
 }
 
 void fromPicker(void *pvParameters){
-    Serial.println("Start listening...");
+    //Serial.println("Start listening...");
 
    /* Lógica invertida: o GND é o PCF, portanto o pino deve ser colocado em 0 para 
    acionar os relés (addr: 0x27).
@@ -341,16 +342,16 @@ void fromPicker(void *pvParameters){
     while (true){
         WiFiClient client = server.available();
         if (client){
-            Serial.print("RGBarray[0]: ");
-            Serial.println(RGBarray[2]);
+            //Serial.print("RGBarray[0]: ");
+            //Serial.println(RGBarray[2]);
             i = 0;
             while (client.connected()){
                 //avalia se tem dados e controla o buffer
                 if (client.available() && i<6){
                     result[i] = client.read();
-                    Serial.println(result[i]);
+                    //Serial.println(result[i]);
                     i = result[0] == 94 ? i+1 : 0;
-                    //Serial.println(result[0]);
+                    ////Serial.println(result[0]);
                 }
             }
             client.stop();
@@ -405,40 +406,40 @@ void getTouch(){
     */
     else if (x<56 && (y>160 && y<180)){
         value[0] = value[0] <100 ? value[0]+1 : value[0];
-        Serial.println("C+");
+        //Serial.println("C+");
     }
     else if ((x>=60 && x<60+55) && (y>160 && y<180)){
         value[1] = value[1] <100 ? value[1]+1 : value[1];
-        Serial.println("M+");
+        //Serial.println("M+");
     }
     else if ((x>=120 && x<120+55) && (y>160 && y<180)){
         value[2] = value[2] <100 ? value[2]+1 : value[2];
-        Serial.println("Y+");
+        //Serial.println("Y+");
     }
     else if ((x>=180 && x<180+55) && (y>160 && y<180)){
         value[3] = value[3] <100 ? value[3]+1 : value[3];
-        Serial.println("K+");
+        //Serial.println("K+");
     }
     //Agora, os últimos 20 px são para decremento.
     else if (x<56 && y>=300){
       value[0] = value[0] >0 ? value[0]-1 : value[0];
-      Serial.print("M: ");
-      Serial.println(value[0]);
+      //Serial.print("M: ");
+      //Serial.println(value[0]);
     }
     else if ((x>=60 && x<60+55) && y>=300){
       value[1] = value[1] >0 ? value[1]-1 : value[1];
-      Serial.print("M: ");
-      Serial.println(value[1]);
+      //Serial.print("M: ");
+      //Serial.println(value[1]);
     }
     else if ((x>=120 && x<120+55) && y>300){
       value[2] = value[2] >0 ? value[2]-1 : value[2];
-      Serial.print("Y: ");
-      Serial.println(value[2]);
+      //Serial.print("Y: ");
+      //Serial.println(value[2]);
     }
     else if((x>=180 && x<180+55) && y>300){
       value[3] = value[3] >0 ? value[3]-1 : value[3];
-      Serial.print("K: ");
-      Serial.println(value[3]);
+      //Serial.print("K: ");
+      //Serial.println(value[3]);
     }
     // botão de iniciar
     else if ((x>240/2-45 && x<240/2+45) && (y>95 && y<95+25) && pump_params.running == 0){
